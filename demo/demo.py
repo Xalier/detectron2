@@ -9,6 +9,7 @@ import time
 import warnings
 import cv2
 import tqdm
+from pathlib import Path
 
 from detectron2.config import get_cfg
 from detectron2.data.detection_utils import read_image
@@ -157,11 +158,11 @@ if __name__ == "__main__":
         if codec == ".mp4v":
             warnings.warn("x264 codec not available, switching to mp4v")
         if args.output:
-            if os.path.isdir(args.output):
-                output_fname = os.path.join(args.output, basename)
-                output_fname = os.path.splitext(output_fname)[0] + file_ext
-            else:
-                output_fname = args.output
+            base_dir = Path(args.output)
+            base_dir.mkdir(exist_ok=True)
+            (base_dir / 'labels').mkdir(exist_ok=True)
+            output_fname = os.path.join(args.output, basename)
+            output_fname = os.path.splitext(output_fname)[0] + file_ext
             assert not os.path.isfile(output_fname), output_fname
             output_file = cv2.VideoWriter(
                 filename=output_fname,
@@ -173,8 +174,31 @@ if __name__ == "__main__":
                 isColor=True,
             )
         assert os.path.isfile(args.video_input)
-        for vis_frame in tqdm.tqdm(demo.run_on_video(video), total=num_frames):
+        for idx, (predictions, vis_frame) in enumerate(tqdm.tqdm(demo.run_on_video(video), total=num_frames)):
             if args.output:
+                h, w, _ = vis_frame.shape
+                logger.info(f'Image: {w} x {h}')
+                logger.info('Classes')
+                classes = predictions.pred_classes.numpy()
+                logger.info(classes)
+                logger.info('Boxes')
+                bbox = predictions.pred_boxes.tensor.numpy()[0]
+                bbox[[0,2]] /= w
+                bbox[[1,3]] /= h
+                logger.info(bbox)                
+                #logger.info('Keypoints')
+                keypoints = predictions.pred_keypoints.numpy()[0]
+                keypoints[:,0] /= w
+                keypoints[:,1] /= h
+                #logger.info(keypoints)
+                combined = np.hstack((classes, bbox, keypoints.flatten()))
+                #logger.info(combined)
+                np.savetxt(
+                    Path(args.output) / 'labels' / f'{idx:04}.txt',
+                    np.array([combined]),
+                    delimiter=' ',
+                    fmt='%.6f'
+                )
                 output_file.write(vis_frame)
             else:
                 cv2.namedWindow(basename, cv2.WINDOW_NORMAL)
