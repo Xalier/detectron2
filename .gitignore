@@ -52,3 +52,5 @@ _darcs
 /models
 /snippet
 py-env
+.pyenv
+data/
