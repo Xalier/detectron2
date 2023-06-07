@@ -183,18 +183,25 @@ if __name__ == "__main__":
                 logger.info(classes)
                 logger.info('Boxes')
                 bbox = predictions.pred_boxes.tensor.numpy()[0]
+                logger.info(bbox)
                 bbox[[0,2]] /= w
                 bbox[[1,3]] /= h
-                logger.info(bbox)                
+                new_bbox = np.array([
+                    (bbox[0] + bbox[2]) / 2.0,
+                    (bbox[1] + bbox[3]) / 2.0,
+                    bbox[2] - bbox[0],
+                    bbox[3] - bbox[1],
+                ], dtype=np.float32)
+                logger.info(new_bbox)
                 #logger.info('Keypoints')
                 keypoints = predictions.pred_keypoints.numpy()[0]
                 keypoints[:,0] /= w
                 keypoints[:,1] /= h
                 #logger.info(keypoints)
-                combined = np.hstack((classes, bbox, keypoints.flatten()))
+                combined = np.hstack((classes, new_bbox, keypoints.flatten()))
                 #logger.info(combined)
                 np.savetxt(
-                    Path(args.output) / 'labels' / f'{idx:04}.txt',
+                    Path(args.output) / 'labels' / f'{(idx+1):04}.txt',
                     np.array([combined]),
                     delimiter=' ',
                     fmt='%.6f'
