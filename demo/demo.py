@@ -179,7 +179,7 @@ if __name__ == "__main__":
                 h, w, _ = vis_frame.shape
                 logger.info(f'Image: {w} x {h}')
                 logger.info('Classes')
-                classes = predictions.pred_classes.numpy()
+                classes = predictions.pred_classes.numpy()[0]
                 logger.info(classes)
                 logger.info('Boxes')
                 bbox = predictions.pred_boxes.tensor.numpy()[0]
