@@ -15,7 +15,7 @@ from detectron2.config import get_cfg
 from detectron2.data.detection_utils import read_image
 from detectron2.utils.logger import setup_logger
 
-from predictor import VisualizationDemo
+from predictor import VisualizationDemo, HeadlessDemo
 
 # constants
 WINDOW_NAME = "COCO detections"
@@ -75,19 +75,26 @@ def get_parser():
 
 
 def test_opencv_video_format(codec, file_ext):
-    with tempfile.TemporaryDirectory(prefix="video_format_test") as dir:
-        filename = os.path.join(dir, "test_file" + file_ext)
-        writer = cv2.VideoWriter(
-            filename=filename,
-            fourcc=cv2.VideoWriter_fourcc(*codec),
-            fps=float(30),
-            frameSize=(10, 10),
-            isColor=True,
-        )
-        [writer.write(np.zeros((10, 10, 3), np.uint8)) for _ in range(30)]
-        writer.release()
-        if os.path.isfile(filename):
-            return True
+    try:
+        print("Testing video format.")
+        with tempfile.TemporaryDirectory(prefix="video_format_test") as dir:
+            filename = os.path.join(dir, "test_file" + file_ext)
+            writer = cv2.VideoWriter(
+                filename=filename,
+                fourcc=cv2.VideoWriter_fourcc(*codec),
+                fps=float(30),
+                frameSize=(10, 10),
+                isColor=True,
+            )
+            [writer.write(np.zeros((10, 10, 3), np.uint8)) for _ in range(30)]
+            writer.release()
+            if os.path.isfile(filename):
+                print("Succeeded")
+                return True
+            print("Failed, no file.")
+            return False
+    except:
+        print("Failed with exception")
         return False
 
 
@@ -100,7 +107,7 @@ if __name__ == "__main__":
 
     cfg = setup_cfg(args)
 
-    demo = VisualizationDemo(cfg)
+    demo = HeadlessDemo(cfg)
 
     if args.input:
         if len(args.input) == 1:
@@ -152,31 +159,37 @@ if __name__ == "__main__":
         frames_per_second = video.get(cv2.CAP_PROP_FPS)
         num_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
         basename = os.path.basename(args.video_input)
-        codec, file_ext = (
-            ("x264", ".mkv") if test_opencv_video_format("x264", ".mkv") else ("mp4v", ".mp4")
-        )
-        if codec == ".mp4v":
-            warnings.warn("x264 codec not available, switching to mp4v")
+        print(f'Reading video: {args.video_input}, ({width}x{height}) {frames_per_second} fps. {num_frames} frames')
+        
+        # codec, file_ext = (
+        #     ("x264", ".mkv") if test_opencv_video_format("x264", ".mkv") else ("mp4v", ".mp4")
+        # )
+        # if codec == "mp4v":
+        #     warnings.warn("x264 codec not available, switching to mp4v")
         if args.output:
             base_dir = Path(args.output)
             base_dir.mkdir(exist_ok=True)
             (base_dir / 'labels').mkdir(exist_ok=True)
-            output_fname = os.path.join(args.output, basename)
-            output_fname = os.path.splitext(output_fname)[0] + file_ext
-            assert not os.path.isfile(output_fname), output_fname
-            output_file = cv2.VideoWriter(
-                filename=output_fname,
-                # some installation of opencv may not support x264 (due to its license),
-                # you can try other format (e.g. MPEG)
-                fourcc=cv2.VideoWriter_fourcc(*codec),
-                fps=float(frames_per_second),
-                frameSize=(width, height),
-                isColor=True,
-            )
+            #output_fname = os.path.join(args.output, basename)
+            #output_fname = os.path.splitext(output_fname)[0] + file_ext
+            #assert not os.path.isfile(output_fname), output_fname
+            # output_file = cv2.VideoWriter(
+            #     filename=output_fname,
+            #     # some installation of opencv may not support x264 (due to its license),
+            #     # you can try other format (e.g. MPEG)
+            #     fourcc=cv2.VideoWriter_fourcc(*codec),
+            #     fps=float(frames_per_second),
+            #     frameSize=(width, height),
+            #     isColor=True,
+            # )
         assert os.path.isfile(args.video_input)
-        for idx, (predictions, vis_frame) in enumerate(tqdm.tqdm(demo.run_on_video(video), total=num_frames)):
+        for idx, (predictions) in enumerate(tqdm.tqdm(demo.run_on_video(video), total=num_frames)):
             if args.output:
-                h, w, _ = vis_frame.shape
+                if len(predictions.pred_boxes.tensor.numpy()) <= 0:
+                    print('Skipping frame with no people.')
+                    continue
+                # TODO: Fix this. Adjustments to the image may resize
+                w, h = width, height
                 logger.info(f'Image: {w} x {h}')
                 logger.info('Classes')
                 classes = predictions.pred_classes.numpy()[0]
@@ -206,14 +219,14 @@ if __name__ == "__main__":
                     delimiter=' ',
                     fmt='%.6f'
                 )
-                output_file.write(vis_frame)
+                #output_file.write(vis_frame)
             else:
                 cv2.namedWindow(basename, cv2.WINDOW_NORMAL)
                 cv2.imshow(basename, vis_frame)
                 if cv2.waitKey(1) == 27:
                     break  # esc to quit
         video.release()
-        if args.output:
-            output_file.release()
-        else:
-            cv2.destroyAllWindows()
+        #if args.output:
+            #output_file.release()
+        #else:
+        #    cv2.destroyAllWindows()

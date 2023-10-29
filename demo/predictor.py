@@ -10,6 +10,49 @@ from detectron2.data import MetadataCatalog
 from detectron2.engine.defaults import DefaultPredictor
 from detectron2.utils.video_visualizer import VideoVisualizer
 from detectron2.utils.visualizer import ColorMode, Visualizer
+from detectron2.modeling import build_model
+from detectron2.checkpoint import DetectionCheckpointer
+import detectron2.data.transforms as T
+
+class BatchedDefaultPredictor:
+
+    def __init__(self, cfg):
+        self.cfg = cfg.clone()  # cfg can be modified by model
+        self.model = build_model(self.cfg)
+        self.model.eval()
+        if len(cfg.DATASETS.TEST):
+            self.metadata = MetadataCatalog.get(cfg.DATASETS.TEST[0])
+
+        checkpointer = DetectionCheckpointer(self.model)
+        checkpointer.load(cfg.MODEL.WEIGHTS)
+
+        self.aug = T.ResizeShortestEdge(
+            [cfg.INPUT.MIN_SIZE_TEST, cfg.INPUT.MIN_SIZE_TEST], cfg.INPUT.MAX_SIZE_TEST
+        )
+
+        self.input_format = cfg.INPUT.FORMAT
+        assert self.input_format in ["RGB", "BGR"], self.input_format
+
+    def __call__(self, original_images):
+        with torch.no_grad():  # https://github.com/sphinx-doc/sphinx/issues/4258
+
+            def process_image(original_image):
+                # Apply pre-processing to image.
+                if self.input_format == "RGB":
+                    # whether the model expects BGR inputs or RGB
+                    original_image = original_image[:, :, ::-1]
+                height, width = original_image.shape[:2]
+                image = self.aug.get_transform(original_image).apply_image(original_image)
+                image = torch.as_tensor(image.astype("float32").transpose(2, 0, 1))
+
+                return {"image": image, "height": height, "width": width}
+
+            inputs = [process_image(x) for x in original_images]
+            if len(inputs) <= 0:
+                return []
+            predictions = self.model(inputs)
+            #print(predictions)
+            return predictions
 
 
 class VisualizationDemo(object):
@@ -32,7 +75,7 @@ class VisualizationDemo(object):
             num_gpu = torch.cuda.device_count()
             self.predictor = AsyncPredictor(cfg, num_gpus=num_gpu)
         else:
-            self.predictor = DefaultPredictor(cfg)
+            self.predictor = DefaultPredictor(cfg) #DefaultPredictor(cfg)
 
     def run_on_image(self, image):
         """
@@ -128,6 +171,67 @@ class VisualizationDemo(object):
             for frame in frame_gen:
                 yield process_predictions(frame, self.predictor(frame))
 
+class HeadlessDemo(object):
+    def __init__(self, cfg, instance_mode=ColorMode.IMAGE, parallel=False):
+        """
+        Args:
+            cfg (CfgNode):
+            instance_mode (ColorMode):
+            parallel (bool): whether to run the model in different processes from visualization.
+                Useful since the visualization logic can be slow.
+        """
+        self.metadata = MetadataCatalog.get(
+            cfg.DATASETS.TEST[0] if len(cfg.DATASETS.TEST) else "__unused"
+        )
+        self.cpu_device = torch.device("cpu")
+        self.instance_mode = instance_mode
+
+        self.parallel = parallel
+        if parallel:
+            num_gpu = torch.cuda.device_count()
+            self.predictor = AsyncPredictor(cfg, num_gpus=num_gpu)
+        else:
+            self.predictor = BatchedDefaultPredictor(cfg)
+
+    def _frame_from_video(self, video, batch_size=1):
+        while video.isOpened():
+            frames = []
+            end_of_video = False
+            for i in range(batch_size):
+                success, frame = video.read()
+                if success:
+                    frames.append(frame)
+                else:
+                    end_of_video = True
+                    break
+            yield frames
+
+            if end_of_video:
+                break
+
+    def run_on_video(self, video):
+        """
+        Visualizes predictions on frames of the input video.
+
+        Args:
+            video (cv2.VideoCapture): a :class:`VideoCapture` object, whose source can be
+                either a webcam or a video file.
+
+        Yields:
+            ndarray: BGR visualizations of each video frame.
+        """
+
+        def process_predictions(predictions):
+            if "instances" in predictions:
+                predictions = predictions["instances"].to(self.cpu_device)
+
+            return predictions
+
+        frame_gen = self._frame_from_video(video, 20)
+        for frames in frame_gen:
+            predictions = self.predictor(frames)
+            for prediction in predictions:
+                yield process_predictions(prediction)
 
 class AsyncPredictor:
     """
